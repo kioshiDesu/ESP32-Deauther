@@ -34,8 +34,8 @@ jobs:
       - name: Locate build artifacts
         id: find_build
         run: |
-          # Find the build directory (usually .pio/build/esp32dev)
-          BUILD_DIR=$(find .pio/build -type d -name "bootloader.bin" -printf "%h\n" | head -1)
+          # Find the bootloader.bin file and get its directory
+          BUILD_DIR=$(find .pio/build -name "bootloader.bin" -printf "%h\n" | head -1)
           if [ -z "$BUILD_DIR" ]; then
             echo "Build directory not found!"
             exit 1
@@ -51,10 +51,17 @@ jobs:
             ${{ steps.find_build.outputs.build_dir }}/bootloader.bin
             ${{ steps.find_build.outputs.build_dir }}/partitions.bin
             ${{ steps.find_build.outputs.build_dir }}/firmware.bin
+          # The action will skip missing files (they'll be missing from the zip) and not fail.
 
       - name: Merge binaries into a single image
         run: |
           BUILD_DIR="${{ steps.find_build.outputs.build_dir }}"
+          # Check if partitions.bin exists; if not, use a default offset? But ESP32 always needs one.
+          if [ ! -f "$BUILD_DIR/partitions.bin" ]; then
+            echo "Warning: partitions.bin not found. Creating a default one from board profile might be needed."
+            # We'll still try to merge without it? Better to fail.
+            exit 1
+          fi
           esptool.py --chip esp32 merge_bin \
             -o "$BUILD_DIR/full_image.bin" \
             0x1000 "$BUILD_DIR/bootloader.bin" \
