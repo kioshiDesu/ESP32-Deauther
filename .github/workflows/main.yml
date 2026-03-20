@@ -1,26 +1,68 @@
-- name: Upload all binaries
-  uses: actions/upload-artifact@v4
-  with:
-    name: esp32-deauther-full-build
-    path: |
-      .pio/build/*/bootloader.bin
-      .pio/build/*/partitions.bin
-      .pio/build/*/firmware.bin
+name: Build ESP32-Deauther Firmware
 
-- name: Install esptool
-  run: pip install esptool
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
 
-- name: Merge binaries
-  run: |
-    # Adjust paths if your build directory name differs
-    cd .pio/build/*
-    esptool.py --chip esp32 merge_bin -o full_image.bin \
-      0x1000 bootloader.bin \
-      0x8000 partitions.bin \
-      0x10000 firmware.bin
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-- name: Upload merged image
-  uses: actions/upload-artifact@v4
-  with:
-    name: esp32-deauther-merged
-    path: .pio/build/*/full_image.bin
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+
+      - name: Build firmware
+        run: pio run
+
+      - name: Install esptool for merging
+        run: pip install esptool
+
+      - name: Locate build artifacts
+        id: find_build
+        run: |
+          # Find the build directory (usually .pio/build/esp32dev)
+          BUILD_DIR=$(find .pio/build -type d -name "bootloader.bin" -printf "%h\n" | head -1)
+          if [ -z "$BUILD_DIR" ]; then
+            echo "Build directory not found!"
+            exit 1
+          fi
+          echo "build_dir=$BUILD_DIR" >> $GITHUB_OUTPUT
+          echo "Found build dir: $BUILD_DIR"
+
+      - name: Upload separate binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-deauther-firmware-separate
+          path: |
+            ${{ steps.find_build.outputs.build_dir }}/bootloader.bin
+            ${{ steps.find_build.outputs.build_dir }}/partitions.bin
+            ${{ steps.find_build.outputs.build_dir }}/firmware.bin
+
+      - name: Merge binaries into a single image
+        run: |
+          BUILD_DIR="${{ steps.find_build.outputs.build_dir }}"
+          esptool.py --chip esp32 merge_bin \
+            -o "$BUILD_DIR/full_image.bin" \
+            0x1000 "$BUILD_DIR/bootloader.bin" \
+            0x8000 "$BUILD_DIR/partitions.bin" \
+            0x10000 "$BUILD_DIR/firmware.bin"
+
+      - name: Upload merged image
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-deauther-firmware-merged
+          path: ${{ steps.find_build.outputs.build_dir }}/full_image.bin
